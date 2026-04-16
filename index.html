@@ -4,6 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Kalshi Growth Metrics — Liftoff Performance</title>
+<script>
+  (function() {
+    var PASS = "liftoff2026";
+    var KEY  = "kalshi_auth";
+    if (sessionStorage.getItem(KEY) !== PASS) {
+      var entered = prompt("Enter password to access Kalshi Growth Metrics:");
+      if (entered !== PASS) {
+        document.documentElement.innerHTML = '<div style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#0d0f1a;color:#e8eaf6;font-size:18px;">Access denied. Please refresh and enter the correct password.</div>';
+        throw new Error("Access denied");
+      }
+      sessionStorage.setItem(KEY, PASS);
+    }
+  })();
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root {
