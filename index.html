@@ -43,6 +43,10 @@
   .header-left h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
   .header-left span { font-size: 13px; color: var(--muted); margin-top: 2px; display: block; }
   .header-badge { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 12px; color: var(--muted); }
+  .refresh-btn { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 16px; font-size: 12px; color: var(--text); cursor: pointer; display: flex; align-items: center; gap: 6px; transition: background .15s, border-color .15s; font-family: inherit; white-space: nowrap; }
+  .refresh-btn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .refresh-btn:disabled { opacity: .55; cursor: not-allowed; }
+  .refresh-toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 20px; font-size: 13px; color: var(--text); z-index: 999; box-shadow: 0 4px 24px rgba(0,0,0,.4); transition: opacity .3s; }
 
   .controls { padding: 20px 32px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
   .pill-group { display: flex; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 2px; }
@@ -115,8 +119,11 @@
       <span style="color:var(--accent3)">●</span><span style="color:var(--muted)">2.5–3.5%</span>
       <span style="color:var(--red)">●</span><span style="color:var(--muted)">&lt;2.5%</span>
     </div>
+    <div style="width:1px;height:16px;background:var(--border)"></div>
+    <button class="refresh-btn" id="refreshBtn" onclick="triggerRefresh()">🔄 Refresh Data</button>
   </div>
 </div>
+<div id="refreshToast" class="refresh-toast" style="display:none"></div>
 
 <div class="controls">
   <div>
@@ -466,11 +473,74 @@ RAW.campaigns.forEach(c => {
 
 // Set date
 const latest = RAW.daily_agg[RAW.daily_agg.length-1].day;
-document.getElementById('reportDate').textContent = 'Data through ' + latest + ' · Generated April 16, 2026';
+document.getElementById('reportDate').textContent = 'Data through ' + latest + ' · Generated April 16, 2026';  // updated by automation
 
 // Initial render
 setLevel('campaign');  // start with campaign view
 renderAll();
+
+// ── Refresh Data button ──────────────────────────────────────────────────────
+async function triggerRefresh() {
+  const btn   = document.getElementById('refreshBtn');
+  const toast = document.getElementById('refreshToast');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Triggering…';
+
+  const OWNER    = 'akhambati-dev';
+  const REPO     = 'kalshi_internal_metrics';
+  const WORKFLOW = 'update-dashboard.yml';
+  // Token is stored in sessionStorage so it's never in source code.
+  // You'll be prompted once per browser session.
+  let TOKEN = sessionStorage.getItem('gh_pat');
+  if (!TOKEN) {
+    TOKEN = prompt('Enter your GitHub Personal Access Token to trigger a data refresh:\n(will be remembered for this browser session)');
+    if (!TOKEN) { btn.disabled = false; btn.textContent = '🔄 Refresh Data'; return; }
+    sessionStorage.setItem('gh_pat', TOKEN.trim());
+    TOKEN = TOKEN.trim();
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${TOKEN}`,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: 'main' }),
+      }
+    );
+
+    if (res.status === 204) {
+      btn.textContent = '✅ Update queued!';
+      showToast('✅ Dashboard update triggered — reload this page in about 60 seconds to see fresh data.');
+      setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Refresh Data'; }, 8000);
+    } else {
+      const body = await res.text();
+      throw new Error(`GitHub returned ${res.status}: ${body}`);
+    }
+  } catch(e) {
+    btn.textContent = '❌ Error — see console';
+    btn.disabled = false;
+    showToast('❌ Could not trigger update: ' + e.message, true);
+    console.error('Refresh trigger failed:', e);
+  }
+}
+
+function showToast(msg, isError) {
+  const t = document.getElementById('refreshToast');
+  t.textContent = msg;
+  t.style.borderColor = isError ? 'var(--red)' : 'var(--green)';
+  t.style.display = 'block';
+  t.style.opacity = '1';
+  setTimeout(() => {
+    t.style.opacity = '0';
+    setTimeout(() => { t.style.display = 'none'; }, 300);
+  }, 6000);
+}
 </script>
 </body>
 </html>
