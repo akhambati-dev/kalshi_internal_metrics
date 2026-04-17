@@ -1,0 +1,125 @@
+name: Update Kalshi Dashboard
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 12 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Download CSVs from Slack
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          python3 - << 'PYEOF'
+          import os, sys, requests, datetime
+
+          TOKEN = os.environ.get('SLACK_BOT_TOKEN', '')
+          if not TOKEN:
+              print("ERROR: SLACK_BOT_TOKEN secret is not set.")
+              sys.exit(1)
+
+          CHANNEL_ID = 'C09K75P0VLN'
+          TODAY      = datetime.date.today().strftime('%Y%m%d')
+          HEADERS    = {'Authorization': f'Bearer {TOKEN}'}
+
+          FILE_MAP = {
+              f'liftoff_roas_{TODAY}_'                  : ('/tmp/daily_agg.csv',    'daily_agg'),
+              f'liftoff_roas_weekly_{TODAY}_'           : ('/tmp/weekly_agg.csv',   'weekly_agg'),
+              f'liftoff_campaign_roas_{TODAY}_'         : ('/tmp/daily_camp.csv',   'daily_camp'),
+              f'liftoff_campaign_roas_weekly_{TODAY}_'  : ('/tmp/weekly_camp.csv',  'weekly_camp'),
+          }
+          YESTERDAY = (datetime.date.today() - datetime.timedelta(days=1)).strftime('%Y%m%d')
+          FALLBACK_MAP = {
+              f'liftoff_roas_{YESTERDAY}_'                 : ('/tmp/daily_agg.csv',   'daily_agg'),
+              f'liftoff_roas_weekly_{YESTERDAY}_'          : ('/tmp/weekly_agg.csv',  'weekly_agg'),
+              f'liftoff_campaign_roas_{YESTERDAY}_'        : ('/tmp/daily_camp.csv',  'daily_camp'),
+              f'liftoff_campaign_roas_weekly_{YESTERDAY}_' : ('/tmp/weekly_camp.csv', 'weekly_camp'),
+          }
+          downloaded = {}
+
+          def try_download(messages, patterns):
+              for msg in messages:
+                  for f in msg.get('files', []):
+                      fname = f.get('name', '')
+                      for prefix, (path, key) in patterns.items():
+                          if fname.startswith(prefix) and key not in downloaded:
+                              url = f.get('url_private_download') or f.get('url_private', '')
+                              if not url: continue
+                              r = requests.get(url, headers=HEADERS, timeout=30)
+                              r.raise_for_status()
+                              with open(path, 'w') as fp: fp.write(r.text)
+                              downloaded[key] = fname
+                              print(f'  Downloaded {fname} -> {path}')
+
+          resp = requests.get('https://slack.com/api/conversations.history',
+              headers=HEADERS, params={'channel': CHANNEL_ID, 'limit': 100}, timeout=30).json()
+          if not resp.get('ok'):
+              print(f"ERROR: Slack API error: {resp.get('error','unknown')}"); sys.exit(1)
+          messages = resp.get('messages', [])
+          print(f"Fetched {len(messages)} messages.")
+          try_download(messages, FILE_MAP)
+          if len(downloaded) < 4:
+              try_download(messages, FALLBACK_MAP)
+          if len(downloaded) < 4:
+              print("ERROR: missing files"); sys.exit(1)
+          print(f"Downloaded: {list(downloaded.values())}")
+          PYEOF
+
+      - name: Parse CSVs and rebuild dashboard
+        run: |
+          python3 - << 'PYEOF'
+          import csv, json, re, datetime
+
+          def safe_float(v):
+              try: return round(float(v), 6) if float(v) else None
+              except: return None
+
+          def parse_csv(path, key_field):
+              with open(path) as f: rows = list(csv.DictReader(f))
+              if key_field == 'day':
+                  return [{'day':r['day'],'spend':safe_float(r['spend']),'d1':safe_float(r['roas_day_1']),'d7':safe_float(r['roas_day_7']),'d30':safe_float(r['roas_day_30'])} for r in rows]
+              if key_field == 'week':
+                  return [{'week':r['week'],'spend':safe_float(r['spend']),'d1':safe_float(r['roas_day_1']),'d7':safe_float(r['roas_day_7']),'d30':safe_float(r['roas_day_30'])} for r in rows]
+              if key_field == 'day_camp':
+                  return [{'day':r['day'],'campaign':r['campaign'],'spend':safe_float(r['spend']),'d1':safe_float(r['roas_day_1']),'d7':safe_float(r['roas_day_7']),'d30':safe_float(r['roas_day_30'])} for r in rows]
+              if key_field == 'week_camp':
+                  return [{'week':r['week'],'campaign':r['campaign'],'spend':safe_float(r['spend']),'d1':safe_float(r['roas_day_1']),'d7':safe_float(r['roas_day_7']),'d30':safe_float(r['roas_day_30'])} for r in rows]
+
+          daily_agg   = parse_csv('/tmp/daily_agg.csv',  'day')
+          weekly_agg  = parse_csv('/tmp/weekly_agg.csv', 'week')
+          daily_camp  = parse_csv('/tmp/daily_camp.csv', 'day_camp')
+          weekly_camp = parse_csv('/tmp/weekly_camp.csv','week_camp')
+          campaigns   = sorted(set(r['campaign'] for r in daily_camp))
+          data = {'daily_agg':daily_agg,'weekly_agg':weekly_agg,'daily_camp':daily_camp,'weekly_camp':weekly_camp,'campaigns':campaigns}
+
+          html = open('index.html').read()
+          html = re.sub(r'const RAW = \{.*?\};', f'const RAW = {json.dumps(data, separators=(",",":"))};', html, flags=re.DOTALL)
+          today_str = datetime.date.today().strftime('%B %-d, %Y')
+          html = re.sub(r'Generated [A-Za-z]+ \d+, \d{4}', f'Generated {today_str}', html)
+          open('index.html','w').write(html)
+          print(f"Done. Data through {daily_agg[-1]['day']}, generated {today_str}")
+          PYEOF
+
+      - name: Commit and push
+        run: |
+          git config user.email "automation@liftoff.io"
+          git config user.name "Kalshi Automation"
+          git add index.html
+          git diff --cached --quiet && echo "No changes." || (git commit -m "Daily update $(date +%Y-%m-%d)" && git push)
