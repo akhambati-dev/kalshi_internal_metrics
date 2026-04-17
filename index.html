@@ -47,6 +47,26 @@
   .refresh-btn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #fff; }
   .refresh-btn:disabled { opacity: .55; cursor: not-allowed; }
   .refresh-toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 20px; font-size: 13px; color: var(--text); z-index: 999; box-shadow: 0 4px 24px rgba(0,0,0,.4); transition: opacity .3s; }
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:1000; align-items:center; justify-content:center; }
+  .modal-overlay.open { display:flex; }
+  .modal { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:28px 32px; width:480px; max-width:94vw; }
+  .modal h2 { font-size:16px; font-weight:700; margin-bottom:6px; }
+  .modal p { font-size:13px; color:var(--muted); margin-bottom:20px; line-height:1.6; }
+  .modal-steps { display:flex; flex-direction:column; gap:10px; margin-bottom:22px; }
+  .modal-step { display:flex; align-items:center; gap:12px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 14px; font-size:13px; }
+  .modal-step .step-label { flex:1; color:var(--muted); }
+  .modal-step .step-label b { color:var(--text); display:block; font-size:12px; margin-bottom:2px; }
+  .modal-step input[type=file] { display:none; }
+  .modal-step .pick-btn { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:11px; color:var(--text); cursor:pointer; white-space:nowrap; }
+  .modal-step .pick-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .modal-step .check { font-size:15px; min-width:18px; }
+  .modal-footer { display:flex; gap:10px; justify-content:flex-end; }
+  .modal-footer button { border-radius:8px; padding:8px 18px; font-size:13px; cursor:pointer; font-family:inherit; border:1px solid var(--border); }
+  .btn-cancel { background:var(--surface2); color:var(--muted); }
+  .btn-apply { background:var(--accent); color:#fff; border-color:var(--accent); opacity:.45; }
+  .btn-apply.ready { opacity:1; cursor:pointer; }
+  .progress-bar { height:3px; background:var(--border); border-radius:2px; overflow:hidden; margin-bottom:14px; display:none; }
+  .progress-bar .fill { height:100%; background:var(--accent); width:0%; transition:width .3s; }
 
   .controls { padding: 20px 32px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
   .pill-group { display: flex; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 2px; }
@@ -124,6 +144,45 @@
   </div>
 </div>
 <div id="refreshToast" class="refresh-toast" style="display:none"></div>
+
+<!-- ── Upload Modal ─────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="uploadModal">
+  <div class="modal">
+    <h2>🔄 Refresh Dashboard Data</h2>
+    <p>Download the 4 CSV files from the <b>#ext-kalshi-liftoff</b> Slack channel (posted automatically each morning), then select them below. The dashboard will update instantly and save to GitHub.</p>
+    <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
+    <div class="modal-steps">
+      <div class="modal-step">
+        <span class="check" id="chk0">○</span>
+        <div class="step-label"><b>Daily ROAS</b> liftoff_roas_YYYYMMDD_*.csv</div>
+        <label class="pick-btn" for="f0">Choose file</label>
+        <input type="file" id="f0" accept=".csv" onchange="fileChosen(0,this)">
+      </div>
+      <div class="modal-step">
+        <span class="check" id="chk1">○</span>
+        <div class="step-label"><b>Weekly ROAS</b> liftoff_roas_weekly_YYYYMMDD_*.csv</div>
+        <label class="pick-btn" for="f1">Choose file</label>
+        <input type="file" id="f1" accept=".csv" onchange="fileChosen(1,this)">
+      </div>
+      <div class="modal-step">
+        <span class="check" id="chk2">○</span>
+        <div class="step-label"><b>Daily Campaign ROAS</b> liftoff_campaign_roas_YYYYMMDD_*.csv</div>
+        <label class="pick-btn" for="f2">Choose file</label>
+        <input type="file" id="f2" accept=".csv" onchange="fileChosen(2,this)">
+      </div>
+      <div class="modal-step">
+        <span class="check" id="chk3">○</span>
+        <div class="step-label"><b>Weekly Campaign ROAS</b> liftoff_campaign_roas_weekly_YYYYMMDD_*.csv</div>
+        <label class="pick-btn" for="f3">Choose file</label>
+        <input type="file" id="f3" accept=".csv" onchange="fileChosen(3,this)">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-apply" id="applyBtn" onclick="applyUpdate()" disabled>Update Dashboard</button>
+    </div>
+  </div>
+</div>
 
 <div class="controls">
   <div>
@@ -479,54 +538,146 @@ document.getElementById('reportDate').textContent = 'Data through ' + latest + '
 setLevel('campaign');  // start with campaign view
 renderAll();
 
-// ── Refresh Data button ──────────────────────────────────────────────────────
-async function triggerRefresh() {
-  const btn   = document.getElementById('refreshBtn');
-  const toast = document.getElementById('refreshToast');
+// ── Refresh Data — file upload approach (no Slack token needed) ──────────────
+const OWNER = 'akhambati-dev', REPO = 'kalshi_internal_metrics';
+const csvFiles = [null, null, null, null];
 
+function triggerRefresh() {
+  document.getElementById('uploadModal').classList.add('open');
+}
+function closeModal() {
+  document.getElementById('uploadModal').classList.remove('open');
+}
+
+function fileChosen(idx, input) {
+  csvFiles[idx] = input.files[0] || null;
+  document.getElementById('chk' + idx).textContent = csvFiles[idx] ? '✅' : '○';
+  const allReady = csvFiles.every(f => f !== null);
+  const btn = document.getElementById('applyBtn');
+  btn.disabled = !allReady;
+  btn.classList.toggle('ready', allReady);
+}
+
+function safeFloat(v) {
+  const f = parseFloat(v);
+  return isNaN(f) || f === 0 ? null : Math.round(f * 1e6) / 1e6;
+}
+
+function parseCSV(text, keyField) {
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,''));
+  return lines.slice(1).map(line => {
+    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g,''));
+    const r = Object.fromEntries(headers.map((h,i) => [h, vals[i]]));
+    if (keyField === 'day')
+      return {day:r.day, spend:safeFloat(r.spend), d1:safeFloat(r.roas_day_1), d7:safeFloat(r.roas_day_7), d30:safeFloat(r.roas_day_30)};
+    if (keyField === 'week')
+      return {week:r.week, spend:safeFloat(r.spend), d1:safeFloat(r.roas_day_1), d7:safeFloat(r.roas_day_7), d30:safeFloat(r.roas_day_30)};
+    if (keyField === 'day_camp')
+      return {day:r.day, campaign:r.campaign, spend:safeFloat(r.spend), d1:safeFloat(r.roas_day_1), d7:safeFloat(r.roas_day_7), d30:safeFloat(r.roas_day_30)};
+    if (keyField === 'week_camp')
+      return {week:r.week, campaign:r.campaign, spend:safeFloat(r.spend), d1:safeFloat(r.roas_day_1), d7:safeFloat(r.roas_day_7), d30:safeFloat(r.roas_day_30)};
+  });
+}
+
+function readFile(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = e => res(e.target.result);
+    r.onerror = rej;
+    r.readAsText(file);
+  });
+}
+
+function setProgress(pct) {
+  document.getElementById('progressBar').style.display = 'block';
+  document.getElementById('progressFill').style.width = pct + '%';
+}
+
+async function applyUpdate() {
+  const btn = document.getElementById('applyBtn');
   btn.disabled = true;
-  btn.textContent = '⏳ Triggering…';
-
-  const OWNER    = 'akhambati-dev';
-  const REPO     = 'kalshi_internal_metrics';
-  const WORKFLOW = 'update-dashboard.yml';
-  // Token is stored in sessionStorage so it's never in source code.
-  // You'll be prompted once per browser session.
-  let TOKEN = sessionStorage.getItem('gh_pat');
-  if (!TOKEN) {
-    TOKEN = prompt('Enter your GitHub Personal Access Token to trigger a data refresh:\n(will be remembered for this browser session)');
-    if (!TOKEN) { btn.disabled = false; btn.textContent = '🔄 Refresh Data'; return; }
-    sessionStorage.setItem('gh_pat', TOKEN.trim());
-    TOKEN = TOKEN.trim();
-  }
+  btn.textContent = '⏳ Processing…';
+  setProgress(10);
 
   try {
-    const res = await fetch(
-      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/dispatches`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${TOKEN}`,
-          'Accept': 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ref: 'main' }),
-      }
-    );
-
-    if (res.status === 204) {
-      btn.textContent = '✅ Update queued!';
-      showToast('✅ Dashboard update triggered — reload this page in about 60 seconds to see fresh data.');
-      setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Refresh Data'; }, 8000);
-    } else {
-      const body = await res.text();
-      throw new Error(`GitHub returned ${res.status}: ${body}`);
+    // Detect which file is which by filename pattern
+    const sorted = [null, null, null, null];
+    for (const f of csvFiles) {
+      const n = f.name;
+      if (/liftoff_campaign_roas_weekly/i.test(n))     sorted[3] = f;
+      else if (/liftoff_campaign_roas/i.test(n))       sorted[2] = f;
+      else if (/liftoff_roas_weekly/i.test(n))         sorted[1] = f;
+      else if (/liftoff_roas/i.test(n))                sorted[0] = f;
     }
+    if (sorted.some(f => !f)) throw new Error('Could not identify all 4 file types by filename. Make sure you selected the correct files.');
+
+    setProgress(25);
+    const [da, wa, dc, wc] = await Promise.all(sorted.map(readFile));
+    setProgress(45);
+
+    const daily_agg  = parseCSV(da, 'day');
+    const weekly_agg = parseCSV(wa, 'week');
+    const daily_camp = parseCSV(dc, 'day_camp');
+    const weekly_camp= parseCSV(wc, 'week_camp');
+    const campaigns  = [...new Set(daily_camp.map(r => r.campaign))].sort();
+
+    const newData = {daily_agg, weekly_agg, daily_camp, weekly_camp, campaigns};
+
+    // Update live data on this page instantly
+    Object.assign(RAW, newData);
+    RAW.campaigns.length = 0;
+    campaigns.forEach(c => RAW.campaigns.push(c));
+    const latest = daily_agg[daily_agg.length - 1].day;
+    const today  = new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
+    document.getElementById('reportDate').textContent = 'Data through ' + latest + ' · Generated ' + today;
+    renderAll();
+    setProgress(65);
+
+    // Push updated HTML to GitHub
+    let TOKEN = sessionStorage.getItem('gh_pat');
+    if (!TOKEN) {
+      TOKEN = prompt('Enter your GitHub Personal Access Token to save to GitHub:\n(remembered for this browser session)');
+      if (!TOKEN) { setProgress(0); document.getElementById('progressBar').style.display='none'; showToast('Dashboard updated live but NOT saved to GitHub (no token provided).', true); closeModal(); return; }
+      sessionStorage.setItem('gh_pat', TOKEN.trim());
+      TOKEN = TOKEN.trim();
+    }
+
+    // Get current file SHA
+    const metaRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/index.html`,
+      {headers: {'Authorization':'Bearer '+TOKEN,'Accept':'application/vnd.github+json'}});
+    const meta = await metaRes.json();
+    setProgress(78);
+
+    // Build updated HTML: replace const RAW and Generated date
+    let html = atob(meta.content.replace(/\n/g,''));
+    html = html.replace(/const RAW = \{[\s\S]*?\};/, 'const RAW = ' + JSON.stringify(newData) + ';');
+    html = html.replace(/Generated [A-Za-z]+ \d+, \d{4}/, 'Generated ' + today);
+    setProgress(88);
+
+    const pushRes = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/index.html`, {
+      method: 'PUT',
+      headers: {'Authorization':'Bearer '+TOKEN,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
+      body: JSON.stringify({message:'Daily update ' + new Date().toISOString().slice(0,10), content: btoa(unescape(encodeURIComponent(html))), sha: meta.sha})
+    });
+
+    if (!pushRes.ok) {
+      const err = await pushRes.json();
+      throw new Error('GitHub push failed: ' + (err.message || pushRes.status));
+    }
+
+    setProgress(100);
+    closeModal();
+    showToast('✅ Dashboard updated and saved to GitHub!');
+    setTimeout(() => { document.getElementById('progressBar').style.display='none'; }, 1000);
+
   } catch(e) {
-    btn.textContent = '❌ Error — see console';
     btn.disabled = false;
-    showToast('❌ Could not trigger update: ' + e.message, true);
-    console.error('Refresh trigger failed:', e);
+    btn.textContent = 'Update Dashboard';
+    setProgress(0);
+    document.getElementById('progressBar').style.display = 'none';
+    showToast('❌ ' + e.message, true);
+    console.error(e);
   }
 }
 
@@ -536,10 +687,7 @@ function showToast(msg, isError) {
   t.style.borderColor = isError ? 'var(--red)' : 'var(--green)';
   t.style.display = 'block';
   t.style.opacity = '1';
-  setTimeout(() => {
-    t.style.opacity = '0';
-    setTimeout(() => { t.style.display = 'none'; }, 300);
-  }, 6000);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => { t.style.display = 'none'; }, 300); }, 7000);
 }
 </script>
 </body>
