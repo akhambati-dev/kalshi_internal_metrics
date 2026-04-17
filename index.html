@@ -52,14 +52,18 @@
   .modal { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:28px 32px; width:480px; max-width:94vw; }
   .modal h2 { font-size:16px; font-weight:700; margin-bottom:6px; }
   .modal p { font-size:13px; color:var(--muted); margin-bottom:20px; line-height:1.6; }
-  .modal-steps { display:flex; flex-direction:column; gap:10px; margin-bottom:22px; }
-  .modal-step { display:flex; align-items:center; gap:12px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 14px; font-size:13px; }
-  .modal-step .step-label { flex:1; color:var(--muted); }
-  .modal-step .step-label b { color:var(--text); display:block; font-size:12px; margin-bottom:2px; }
-  .modal-step input[type=file] { display:none; }
-  .modal-step .pick-btn { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:11px; color:var(--text); cursor:pointer; white-space:nowrap; }
-  .modal-step .pick-btn:hover { border-color:var(--accent); color:var(--accent); }
-  .modal-step .check { font-size:15px; min-width:18px; }
+  .drop-zone { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:2px dashed var(--border); border-radius:10px; padding:28px 20px; margin-bottom:16px; cursor:pointer; transition:border-color .2s, background .2s; text-align:center; }
+  .drop-zone:hover, .drop-zone.dragover { border-color:var(--accent); background:rgba(99,102,241,.06); }
+  .drop-zone input[type=file] { display:none; }
+  .drop-zone .dz-icon { font-size:28px; }
+  .drop-zone .dz-text { font-size:13px; color:var(--muted); }
+  .drop-zone .dz-text b { color:var(--text); }
+  .drop-zone .pick-btn { background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:5px 14px; font-size:12px; color:var(--text); cursor:pointer; }
+  .drop-zone .pick-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .file-chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; min-height:28px; }
+  .file-chip { display:flex; align-items:center; gap:5px; background:var(--surface2); border:1px solid var(--border); border-radius:20px; padding:3px 10px; font-size:11px; color:var(--text); }
+  .file-chip.ok { border-color:#22c55e; color:#22c55e; }
+  .file-chip.err { border-color:#ef4444; color:#ef4444; }
   .modal-footer { display:flex; gap:10px; justify-content:flex-end; }
   .modal-footer button { border-radius:8px; padding:8px 18px; font-size:13px; cursor:pointer; font-family:inherit; border:1px solid var(--border); }
   .btn-cancel { background:var(--surface2); color:var(--muted); }
@@ -149,34 +153,16 @@
 <div class="modal-overlay" id="uploadModal">
   <div class="modal">
     <h2>🔄 Refresh Dashboard Data</h2>
-    <p>Download the 4 CSV files from the <b>#ext-kalshi-liftoff</b> Slack channel (posted automatically each morning), then select them below. The dashboard will update instantly and save to GitHub.</p>
+    <p>Download the 4 CSV files from <b>#ext-kalshi-liftoff</b>, then select them all at once below. Files are auto-detected by name.</p>
     <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
-    <div class="modal-steps">
-      <div class="modal-step">
-        <span class="check" id="chk0">○</span>
-        <div class="step-label"><b>Daily ROAS</b> liftoff_roas_YYYYMMDD_*.csv</div>
-        <label class="pick-btn" for="f0">Choose file</label>
-        <input type="file" id="f0" accept=".csv" onchange="fileChosen(0,this)">
-      </div>
-      <div class="modal-step">
-        <span class="check" id="chk1">○</span>
-        <div class="step-label"><b>Weekly ROAS</b> liftoff_roas_weekly_YYYYMMDD_*.csv</div>
-        <label class="pick-btn" for="f1">Choose file</label>
-        <input type="file" id="f1" accept=".csv" onchange="fileChosen(1,this)">
-      </div>
-      <div class="modal-step">
-        <span class="check" id="chk2">○</span>
-        <div class="step-label"><b>Daily Campaign ROAS</b> liftoff_campaign_roas_YYYYMMDD_*.csv</div>
-        <label class="pick-btn" for="f2">Choose file</label>
-        <input type="file" id="f2" accept=".csv" onchange="fileChosen(2,this)">
-      </div>
-      <div class="modal-step">
-        <span class="check" id="chk3">○</span>
-        <div class="step-label"><b>Weekly Campaign ROAS</b> liftoff_campaign_roas_weekly_YYYYMMDD_*.csv</div>
-        <label class="pick-btn" for="f3">Choose file</label>
-        <input type="file" id="f3" accept=".csv" onchange="fileChosen(3,this)">
-      </div>
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('multiFile').click()" ondragover="dzDragOver(event)" ondragleave="dzDragLeave()" ondrop="dzDrop(event)">
+      <div class="dz-icon">📂</div>
+      <div class="dz-text"><b>Click to select files</b> or drag &amp; drop here</div>
+      <div class="dz-text">Select all 4 CSV files at once — they'll be identified automatically</div>
+      <label class="pick-btn" onclick="event.stopPropagation();" for="multiFile">Browse files</label>
+      <input type="file" id="multiFile" accept=".csv" multiple onchange="filesChosen(this.files)">
     </div>
+    <div class="file-chips" id="fileChips"></div>
     <div class="modal-footer">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       <button class="btn-apply" id="applyBtn" onclick="applyUpdate()" disabled>Update Dashboard</button>
@@ -540,22 +526,78 @@ renderAll();
 
 // ── Refresh Data — file upload approach (no Slack token needed) ──────────────
 const OWNER = 'akhambati-dev', REPO = 'kalshi_internal_metrics';
-const csvFiles = [null, null, null, null];
+let csvFiles = [null, null, null, null]; // [daily_agg, weekly_agg, daily_camp, weekly_camp]
 
 function triggerRefresh() {
+  csvFiles = [null, null, null, null];
+  document.getElementById('fileChips').innerHTML = '';
+  document.getElementById('multiFile').value = '';
+  document.getElementById('applyBtn').disabled = true;
   document.getElementById('uploadModal').classList.add('open');
 }
 function closeModal() {
   document.getElementById('uploadModal').classList.remove('open');
 }
 
-function fileChosen(idx, input) {
-  csvFiles[idx] = input.files[0] || null;
-  document.getElementById('chk' + idx).textContent = csvFiles[idx] ? '✅' : '○';
+function detectFile(name) {
+  if (/liftoff_campaign_roas_weekly/i.test(name)) return 3;
+  if (/liftoff_campaign_roas/i.test(name))         return 2;
+  if (/liftoff_roas_weekly/i.test(name))           return 1;
+  if (/liftoff_roas/i.test(name))                  return 0;
+  return -1;
+}
+
+const FILE_LABELS = ['Daily ROAS', 'Weekly ROAS', 'Daily Campaign ROAS', 'Weekly Campaign ROAS'];
+
+function filesChosen(fileList) {
+  csvFiles = [null, null, null, null];
+  const chips = document.getElementById('fileChips');
+  chips.innerHTML = '';
+
+  Array.from(fileList).forEach(f => {
+    const idx = detectFile(f.name);
+    const chip = document.createElement('span');
+    chip.className = 'file-chip';
+    if (idx >= 0) {
+      csvFiles[idx] = f;
+      chip.classList.add('ok');
+      chip.textContent = '✅ ' + FILE_LABELS[idx];
+    } else {
+      chip.classList.add('err');
+      chip.textContent = '❓ ' + f.name;
+    }
+    chips.appendChild(chip);
+  });
+
   const allReady = csvFiles.every(f => f !== null);
   const btn = document.getElementById('applyBtn');
   btn.disabled = !allReady;
   btn.classList.toggle('ready', allReady);
+
+  // Show which are still missing
+  if (!allReady) {
+    csvFiles.forEach((f, i) => {
+      if (!f) {
+        const chip = document.createElement('span');
+        chip.className = 'file-chip err';
+        chip.textContent = '○ ' + FILE_LABELS[i] + ' missing';
+        chips.appendChild(chip);
+      }
+    });
+  }
+}
+
+function dzDragOver(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.add('dragover');
+}
+function dzDragLeave() {
+  document.getElementById('dropZone').classList.remove('dragover');
+}
+function dzDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.remove('dragover');
+  filesChosen(e.dataTransfer.files);
 }
 
 function safeFloat(v) {
@@ -601,19 +643,10 @@ async function applyUpdate() {
   setProgress(10);
 
   try {
-    // Detect which file is which by filename pattern
-    const sorted = [null, null, null, null];
-    for (const f of csvFiles) {
-      const n = f.name;
-      if (/liftoff_campaign_roas_weekly/i.test(n))     sorted[3] = f;
-      else if (/liftoff_campaign_roas/i.test(n))       sorted[2] = f;
-      else if (/liftoff_roas_weekly/i.test(n))         sorted[1] = f;
-      else if (/liftoff_roas/i.test(n))                sorted[0] = f;
-    }
-    if (sorted.some(f => !f)) throw new Error('Could not identify all 4 file types by filename. Make sure you selected the correct files.');
+    if (csvFiles.some(f => !f)) throw new Error('Could not identify all 4 file types. Make sure filenames start with liftoff_roas_, liftoff_roas_weekly_, liftoff_campaign_roas_, liftoff_campaign_roas_weekly_.');
 
     setProgress(25);
-    const [da, wa, dc, wc] = await Promise.all(sorted.map(readFile));
+    const [da, wa, dc, wc] = await Promise.all(csvFiles.map(readFile));
     setProgress(45);
 
     const daily_agg  = parseCSV(da, 'day');
