@@ -474,29 +474,68 @@ function sortTable(col) {
   renderAll();
 }
 
+// Returns "YYYY-MM-DD" of the Sunday that starts r's week (UTC)
+function toSundayKey(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay()); // UTC day 0 = Sunday
+  return d.toISOString().slice(0,10);
+}
+
+// Format a Sunday date as "Apr 13 – Apr 19"
+function fmtWeekRange(sundayStr) {
+  const sun = new Date(sundayStr + 'T12:00:00Z');
+  const sat = new Date(sun); sat.setUTCDate(sun.getUTCDate() + 6);
+  const fmt = d => d.toLocaleDateString('en-US', {month:'short', day:'numeric', timeZone:'UTC'});
+  return fmt(sun) + ' – ' + fmt(sat);
+}
+
 function renderDaily30Table() {
   const cutoff = new Date(Date.now() - windowDays*86400000).toISOString().slice(0,10);
-  const titleEl   = document.getElementById('daily30-title');
-  const sublabel  = document.getElementById('daily30-sublabel');
-  const col1      = document.getElementById('daily30-col1');
-  const tbody     = document.getElementById('daily30-body');
+  const titleEl  = document.getElementById('daily30-title');
+  const sublabel = document.getElementById('daily30-sublabel');
+  const col1     = document.getElementById('daily30-col1');
+  const tbody    = document.getElementById('daily30-body');
 
   if (granularity === 'weekly') {
-    // ── Weekly cohort view ──────────────────────────────────────────────────
-    const rows = RAW.weekly_agg.filter(r => r.week >= cutoff).slice().reverse();
+    // ── Weekly cohort view — Sun–Sat weeks, aggregated from daily data ──────
+    const dailyInWindow = RAW.daily_agg.filter(r => r.day >= cutoff);
+
+    // Group daily rows into Sunday-starting weeks (spend-weighted ROAS avg)
+    const byWeek = {};
+    dailyInWindow.forEach(r => {
+      const wk = toSundayKey(r.day);
+      if (!byWeek[wk]) byWeek[wk] = {week:wk, spend:0, sd1:0, sd7:0, sd30:0, nd1:0, nd7:0, nd30:0};
+      const w = byWeek[wk];
+      w.spend += (r.spend||0);
+      if (r.d1!=null && r.d1>0) { w.sd1 += (r.spend||0)*r.d1; w.nd1 += (r.spend||0); }
+      if (r.d7!=null && r.d7>0) { w.sd7 += (r.spend||0)*r.d7; w.nd7 += (r.spend||0); }
+      if (r.d30!=null&& r.d30>0){ w.sd30+= (r.spend||0)*r.d30;w.nd30+= (r.spend||0); }
+    });
+
+    const rows = Object.values(byWeek)
+      .map(w => ({
+        week:w.week, spend:w.spend,
+        d1: w.nd1>0 ? w.sd1/w.nd1 : null,
+        d7: w.nd7>0 ? w.sd7/w.nd7 : null,
+        d30:w.nd30>0? w.sd30/w.nd30: null,
+      }))
+      .sort((a,b) => b.week.localeCompare(a.week)); // newest first
+
     if (titleEl)  titleEl.textContent  = `📅 Weekly Performance — Last ${windowDays} Days`;
-    if (sublabel) sublabel.textContent = 'Week-by-week aggregate';
+    if (sublabel) sublabel.textContent = 'Week-by-week aggregate (Sun – Sat)';
     if (col1)     col1.textContent     = 'Week';
+
     tbody.innerHTML = rows.map(r => {
       const d1cls = roasClass(r.d1,'d1'), d7cls = roasClass(r.d7,'d7'), d30cls = roasClass(r.d30,'d30');
       return `<tr>
-        <td style="color:var(--muted);font-size:12px">${r.week}</td>
+        <td style="color:var(--muted);font-size:12px;white-space:nowrap">${fmtWeekRange(r.week)}</td>
         <td>${r.spend ? '$'+Math.round(r.spend).toLocaleString() : '—'}</td>
         <td class="roas-val ${d1cls}">${fmtR(r.d1)}</td>
         <td class="roas-val ${d7cls}">${fmtR(r.d7)}</td>
         <td class="roas-val ${d30cls}">${fmtR(r.d30)}</td>
       </tr>`;
     }).join('');
+
   } else {
     // ── Daily view ──────────────────────────────────────────────────────────
     const rows = RAW.daily_agg.filter(r => r.day >= cutoff).slice().reverse();
@@ -694,10 +733,12 @@ async function applyUpdate() {
     const newData = {daily_agg, weekly_agg, daily_camp, weekly_camp, campaigns};
 
     // Update live data on this page instantly
+    // NOTE: Object.assign makes RAW.campaigns alias the same array as `campaigns`.
+    // We must copy BEFORE assigning so .length=0 doesn't empty both references.
+    const campaignsCopy = campaigns.slice();
     Object.assign(RAW, newData);
-    RAW.campaigns.length = 0;
-    campaigns.forEach(c => RAW.campaigns.push(c));
-    rebuildCampaignDropdown();  // pick up any new campaigns automatically
+    RAW.campaigns = campaignsCopy;   // replace with fresh copy
+    rebuildCampaignDropdown();       // pick up any new campaigns automatically
     const latest = daily_agg[daily_agg.length - 1].day;
     const today  = new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
     document.getElementById('reportDate').textContent = 'Data through ' + latest + ' · Generated ' + today;
