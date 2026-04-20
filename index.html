@@ -209,17 +209,17 @@
     <div class="kpi-sub" id="kpi-spend-sub"></div>
   </div>
   <div class="kpi-card d1">
-    <div class="kpi-label">D1 ROAS (Latest)</div>
+    <div class="kpi-label" id="kpi-d1-label">Avg D1 ROAS</div>
     <div class="kpi-value" id="kpi-d1">—</div>
     <div class="kpi-sub" id="kpi-d1-sub"></div>
   </div>
   <div class="kpi-card d7">
-    <div class="kpi-label">D7 ROAS (Latest)</div>
+    <div class="kpi-label">Avg D7 ROAS</div>
     <div class="kpi-value" id="kpi-d7">—</div>
     <div class="kpi-sub" id="kpi-d7-sub"></div>
   </div>
   <div class="kpi-card d30">
-    <div class="kpi-label">D30 ROAS (Latest)</div>
+    <div class="kpi-label">Avg D30 ROAS</div>
     <div class="kpi-value" id="kpi-d30">—</div>
     <div class="kpi-sub" id="kpi-d30-sub"></div>
   </div>
@@ -243,7 +243,7 @@
 <div class="table-section" id="daily30-section" style="padding:0 32px 16px">
   <div class="table-card">
     <div class="table-header">
-      <div class="table-title">📅 Daily Performance — Last 30 Days</div>
+      <div class="table-title" id="daily30-title">📅 Daily Performance — Last 30 Days</div>
       <div style="font-size:12px;color:var(--muted)">Day-by-day aggregate</div>
     </div>
     <div style="overflow-x:auto">
@@ -340,21 +340,22 @@ function getFilteredCamp() {
 }
 
 function renderKPIs(rows, key) {
+  const today = new Date().toISOString().slice(0,10);
   const totalSpend = rows.reduce((s,r)=>s+(r.spend||0),0);
 
-  // D1: always show D-1 (yesterday) — today's data is incomplete
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0,10);
-  const allDailyAgg = RAW.daily_agg;
-  const d1Row = allDailyAgg.find(r=>r.day===yesterday) ||
-                [...allDailyAgg].reverse().find(r=>r.d1!=null && r.d1>0 && r.day < yesterday.slice(0,10));
+  // D1 avg: spend-weighted, baked rows in window (date < today, d1 non-null, min $1k spend)
+  // D1 bakes within 1 day so virtually all window rows qualify
+  const d1rows = rows.filter(r => r[key] < today && r.d1!=null && r.d1>0 && (r.spend||0) >= 1000);
+  const d1spendTotal = d1rows.reduce((s,r)=>s+(r.spend||0),0);
+  const d1avg = d1spendTotal > 0 ? d1rows.reduce((s,r)=>s+(r.d1*(r.spend||0)),0)/d1spendTotal : null;
 
-  // D7 avg: spend-weighted, only baked rows (date <= today - 7 days), min spend $1k to exclude anomalies
+  // D7 avg: spend-weighted, baked rows (date <= today − 7 days), min $1k spend
   const d7cutoff = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
   const d7rows = rows.filter(r => r[key] <= d7cutoff && r.d7!=null && r.d7>0 && (r.spend||0) >= 1000);
   const d7spendTotal = d7rows.reduce((s,r)=>s+(r.spend||0),0);
   const d7avg = d7spendTotal > 0 ? d7rows.reduce((s,r)=>s+(r.d7*(r.spend||0)),0)/d7spendTotal : null;
 
-  // D30 avg: spend-weighted, only baked rows (date <= today - 30 days), min spend $1k
+  // D30 avg: spend-weighted, baked rows (date <= today − 30 days), min $1k spend
   const d30cutoff = new Date(Date.now() - 30*86400000).toISOString().slice(0,10);
   const d30rows = rows.filter(r => r[key] <= d30cutoff && r.d30!=null && r.d30>0 && (r.spend||0) >= 1000);
   const d30spendTotal = d30rows.reduce((s,r)=>s+(r.spend||0),0);
@@ -363,8 +364,8 @@ function renderKPIs(rows, key) {
   document.getElementById('kpi-spend').textContent = '$'+Math.round(totalSpend).toLocaleString();
   document.getElementById('kpi-spend-sub').textContent = rows.length + (granularity==='daily'?' days':' weeks');
 
-  document.getElementById('kpi-d1').textContent = d1Row ? fmtR(d1Row.d1) : '—';
-  document.getElementById('kpi-d1-sub').textContent = d1Row ? 'D-1 · '+d1Row.day : 'No data';
+  document.getElementById('kpi-d1').textContent = d1avg!=null ? fmtR(d1avg) : '—';
+  document.getElementById('kpi-d1-sub').textContent = d1rows.length ? 'Spend-wtd avg · '+d1rows.length+' baked days' : 'No complete data';
 
   document.getElementById('kpi-d7').textContent = d7avg!=null ? fmtR(d7avg) : '—';
   document.getElementById('kpi-d7-sub').textContent = d7rows.length ? 'Spend-wtd avg · '+d7rows.length+' baked days' : 'No complete data';
@@ -474,8 +475,10 @@ function sortTable(col) {
 }
 
 function renderDaily30Table() {
-  const cutoff = new Date(Date.now() - 30*86400000).toISOString().slice(0,10);
+  const cutoff = new Date(Date.now() - windowDays*86400000).toISOString().slice(0,10);
   const rows = RAW.daily_agg.filter(r => r.day >= cutoff).slice().reverse();
+  const titleEl = document.getElementById('daily30-title');
+  if (titleEl) titleEl.textContent = `📅 Daily Performance — Last ${windowDays} Days`;
   const tbody = document.getElementById('daily30-body');
   tbody.innerHTML = rows.map(r => {
     const d1cls = roasClass(r.d1,'d1'), d7cls = roasClass(r.d7,'d7'), d30cls = roasClass(r.d30,'d30');
@@ -508,13 +511,22 @@ function renderAll() {
   }
 }
 
+// Campaign dropdown builder — called at init and after each CSV refresh
+function rebuildCampaignDropdown() {
+  const sel = document.getElementById('campaign-select');
+  const current = sel.value;
+  sel.innerHTML = '<option value="ALL">All Campaigns</option>';
+  RAW.campaigns.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c.replace('Kalshi - Liftoff - ','').replace('Kalshi - ','');
+    sel.appendChild(opt);
+  });
+  // Restore previous selection if the campaign still exists after refresh
+  if ([...sel.options].some(o => o.value === current)) sel.value = current;
+}
+
 // Init campaign dropdown
-const sel = document.getElementById('campaign-select');
-RAW.campaigns.forEach(c => {
-  const opt = document.createElement('option');
-  opt.value = c; opt.textContent = c.replace('Kalshi - Liftoff - ','').replace('Kalshi - ','');
-  sel.appendChild(opt);
-});
+rebuildCampaignDropdown();
 
 // Set date
 const latest = RAW.daily_agg[RAW.daily_agg.length-1].day;
@@ -661,6 +673,7 @@ async function applyUpdate() {
     Object.assign(RAW, newData);
     RAW.campaigns.length = 0;
     campaigns.forEach(c => RAW.campaigns.push(c));
+    rebuildCampaignDropdown();  // pick up any new campaigns automatically
     const latest = daily_agg[daily_agg.length - 1].day;
     const today  = new Date().toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'});
     document.getElementById('reportDate').textContent = 'Data through ' + latest + ' · Generated ' + today;
