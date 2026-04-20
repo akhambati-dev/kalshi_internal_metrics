@@ -244,12 +244,12 @@
   <div class="table-card">
     <div class="table-header">
       <div class="table-title" id="daily30-title">📅 Daily Performance — Last 30 Days</div>
-      <div style="font-size:12px;color:var(--muted)">Day-by-day aggregate</div>
+      <div id="daily30-sublabel" style="font-size:12px;color:var(--muted)">Day-by-day aggregate</div>
     </div>
     <div style="overflow-x:auto">
       <table id="daily30-table">
-        <thead><tr>
-          <th>Date</th><th>Spend</th><th>D1 ROAS</th><th>D7 ROAS</th><th>D30 ROAS</th>
+        <thead id="daily30-head"><tr>
+          <th id="daily30-col1">Date</th><th>Spend</th><th>D1 ROAS</th><th>D7 ROAS</th><th>D30 ROAS</th>
         </tr></thead>
         <tbody id="daily30-body"></tbody>
       </table>
@@ -476,20 +476,44 @@ function sortTable(col) {
 
 function renderDaily30Table() {
   const cutoff = new Date(Date.now() - windowDays*86400000).toISOString().slice(0,10);
-  const rows = RAW.daily_agg.filter(r => r.day >= cutoff).slice().reverse();
-  const titleEl = document.getElementById('daily30-title');
-  if (titleEl) titleEl.textContent = `📅 Daily Performance — Last ${windowDays} Days`;
-  const tbody = document.getElementById('daily30-body');
-  tbody.innerHTML = rows.map(r => {
-    const d1cls = roasClass(r.d1,'d1'), d7cls = roasClass(r.d7,'d7'), d30cls = roasClass(r.d30,'d30');
-    return `<tr>
-      <td style="color:var(--muted);font-size:12px">${r.day}</td>
-      <td>${r.spend ? '$'+Math.round(r.spend).toLocaleString() : '—'}</td>
-      <td class="roas-val ${d1cls}">${fmtR(r.d1)}</td>
-      <td class="roas-val ${d7cls}">${fmtR(r.d7)}</td>
-      <td class="roas-val ${d30cls}">${fmtR(r.d30)}</td>
-    </tr>`;
-  }).join('');
+  const titleEl   = document.getElementById('daily30-title');
+  const sublabel  = document.getElementById('daily30-sublabel');
+  const col1      = document.getElementById('daily30-col1');
+  const tbody     = document.getElementById('daily30-body');
+
+  if (granularity === 'weekly') {
+    // ── Weekly cohort view ──────────────────────────────────────────────────
+    const rows = RAW.weekly_agg.filter(r => r.week >= cutoff).slice().reverse();
+    if (titleEl)  titleEl.textContent  = `📅 Weekly Performance — Last ${windowDays} Days`;
+    if (sublabel) sublabel.textContent = 'Week-by-week aggregate';
+    if (col1)     col1.textContent     = 'Week';
+    tbody.innerHTML = rows.map(r => {
+      const d1cls = roasClass(r.d1,'d1'), d7cls = roasClass(r.d7,'d7'), d30cls = roasClass(r.d30,'d30');
+      return `<tr>
+        <td style="color:var(--muted);font-size:12px">${r.week}</td>
+        <td>${r.spend ? '$'+Math.round(r.spend).toLocaleString() : '—'}</td>
+        <td class="roas-val ${d1cls}">${fmtR(r.d1)}</td>
+        <td class="roas-val ${d7cls}">${fmtR(r.d7)}</td>
+        <td class="roas-val ${d30cls}">${fmtR(r.d30)}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    // ── Daily view ──────────────────────────────────────────────────────────
+    const rows = RAW.daily_agg.filter(r => r.day >= cutoff).slice().reverse();
+    if (titleEl)  titleEl.textContent  = `📅 Daily Performance — Last ${windowDays} Days`;
+    if (sublabel) sublabel.textContent = 'Day-by-day aggregate';
+    if (col1)     col1.textContent     = 'Date';
+    tbody.innerHTML = rows.map(r => {
+      const d1cls = roasClass(r.d1,'d1'), d7cls = roasClass(r.d7,'d7'), d30cls = roasClass(r.d30,'d30');
+      return `<tr>
+        <td style="color:var(--muted);font-size:12px">${r.day}</td>
+        <td>${r.spend ? '$'+Math.round(r.spend).toLocaleString() : '—'}</td>
+        <td class="roas-val ${d1cls}">${fmtR(r.d1)}</td>
+        <td class="roas-val ${d7cls}">${fmtR(r.d7)}</td>
+        <td class="roas-val ${d30cls}">${fmtR(r.d30)}</td>
+      </tr>`;
+    }).join('');
+  }
 }
 
 function renderAll() {
